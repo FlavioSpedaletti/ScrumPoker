@@ -8,9 +8,13 @@
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/7.0.5/signalr.min.js"></script>
     <script>
-        let userName = "";
+        let userName = localStorage.getItem("userName") || "";
+
+        let url = "https://91ae-136-226-62-112.ngrok-free.app/pokerHub"
+        // let url = "http://localhost:5096/pokerHub"
+
         const connection = new signalR.HubConnectionBuilder()
-            .withUrl("https://localhost:7201/pokerHub", {
+            .withUrl(url, {
                 transport: signalR.HttpTransportType.WebSockets,
                 withCredentials: false
             })
@@ -22,6 +26,10 @@
             try {
                 await connection.start();
                 console.log("Conectado ao servidor SignalR");
+                if (userName) {
+                    await connection.invoke("LeaveGame", userName).catch(err => console.error(err.toString()));
+                    joinGame(userName);
+                }
             } catch (err) {
                 console.error("Erro ao conectar, tentando novamente em 5 segundos...", err);
                 setTimeout(startConnection, 5000);
@@ -35,18 +43,28 @@
 
         startConnection();
 
+        function joinGame(name) {
+            userName = name;
+            localStorage.setItem("userName", userName);
+            connection.invoke("JoinGame", userName).catch(err => console.error(err.toString()));
+            document.getElementById("enterButton").style.display = "none";
+            document.getElementById("exitButton").style.display = "inline-block";
+        }
+
         function enterSystem() {
-            userName = prompt("Digite seu nome:");
-            if (userName) {
-                connection.invoke("JoinGame", userName).catch(err => console.error(err.toString()));
-                document.getElementById("enterButton").style.display = "none";
-                document.getElementById("exitButton").style.display = "inline-block";
+            const name = prompt("Digite seu nome:");
+            if (name) {
+                if (userName) {
+                    connection.invoke("LeaveGame", userName).catch(err => console.error(err.toString()));
+                }
+                joinGame(name);
             }
         }
 
         function exitSystem() {
             if (userName) {
                 connection.invoke("LeaveGame", userName).catch(err => console.error(err.toString()));
+                localStorage.removeItem("userName");
                 userName = "";
                 document.getElementById("enterButton").style.display = "inline-block";
                 document.getElementById("exitButton").style.display = "none";
@@ -73,7 +91,7 @@
             document.getElementById("users").innerText = users.join(", ");
         });
 
-        connection.on("UpdateVotes", votes => {
+        connection.on("UpdateVotes", (votes) => {
             updateTable(votes, false);
         });
 
@@ -89,7 +107,7 @@
                 const nameCell = document.createElement("td");
                 nameCell.textContent = user;
                 const voteCell = document.createElement("td");
-                voteCell.textContent = reveal ? votes[user] ?? "-" : "?";
+                voteCell.textContent = reveal ? votes[user] ?? "" : (votes[user] ? "🙈" : "-");
                 row.appendChild(nameCell);
                 row.appendChild(voteCell);
                 tbody.appendChild(row);
