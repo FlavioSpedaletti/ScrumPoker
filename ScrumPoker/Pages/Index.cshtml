@@ -10,8 +10,8 @@
     <script>
         let userName = localStorage.getItem("userName") || "";
 
-        let url = "https://91ae-136-226-62-112.ngrok-free.app/pokerHub"
-        // let url = "http://localhost:5096/pokerHub"
+        //let url = "https://91ae-136-226-62-112.ngrok-free.app/pokerHub";
+        let url = `${window.location.origin}/pokerHub`;
 
         const connection = new signalR.HubConnectionBuilder()
             .withUrl(url, {
@@ -107,7 +107,7 @@
                 const nameCell = document.createElement("td");
                 nameCell.textContent = user;
                 const voteCell = document.createElement("td");
-                voteCell.textContent = reveal ? votes[user] ?? "" : (votes[user] ? "🙈" : "-");
+                voteCell.textContent = reveal ? votes[user] ?? "" : (votes[user] ? (user == userName ? votes[user] : "🙈") : "-");
                 row.appendChild(nameCell);
                 row.appendChild(voteCell);
                 tbody.appendChild(row);
