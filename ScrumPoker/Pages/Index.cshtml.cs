@@ -5,6 +5,9 @@ namespace ScrumPoker.Pages;
 
 public class IndexModel : PageModel
 {
+    [BindProperty(SupportsGet = true)]
+    public string? RoomId { get; set; }
+
     private readonly ILogger<IndexModel> _logger;
 
     public IndexModel(ILogger<IndexModel> logger)
@@ -14,6 +17,6 @@ public class IndexModel : PageModel
 
     public void OnGet()
     {
-
+        RoomId = RouteData.Values["roomId"]?.ToString();
     }
 }

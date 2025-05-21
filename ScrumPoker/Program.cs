@@ -31,6 +31,10 @@ app.UseRouting();
 app.UseAuthorization();
 
 app.MapStaticAssets();
+
+// Rota especial para /room/{id}
+app.MapGet("/room/{id}", (string id) => Results.Redirect($"/?roomId={id}"));
+
 app.MapRazorPages()
    .WithStaticAssets();
 

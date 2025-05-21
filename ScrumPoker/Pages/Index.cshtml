@@ -2,6 +2,7 @@
 @model IndexModel
 @{
     ViewData["Title"] = "Home page";
+    var roomId = Request.Query["roomId"].ToString() ?? RouteData.Values["roomId"]?.ToString();
 }
 
 @section scripts {
@@ -9,9 +10,22 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/7.0.5/signalr.min.js"></script>
     <script>
         let userName = localStorage.getItem("userName") || "";
+        let roomCode = "";
         let possibleVotes = [];
+        let isConnecting = false;
+        
+        // Tenta carregar o código da sala da URL ou do localStorage
+        const urlRoomId = "@roomId";
+        if (urlRoomId && urlRoomId.trim() !== "") {
+            roomCode = urlRoomId.trim();
+        } else {
+            // Só use o localStorage se não houver roomId na URL
+            const storedRoomCode = localStorage.getItem("roomCode");
+            if (storedRoomCode && storedRoomCode.trim() !== "") {
+                roomCode = storedRoomCode.trim();
+            }
+        }
 
-        //let url = "https://91ae-136-226-62-112.ngrok-free.app/pokerHub";
         let url = `${window.location.origin}/pokerHub`;
 
         const connection = new signalR.HubConnectionBuilder()
@@ -23,23 +37,56 @@
             .withAutomaticReconnect()
             .build();
 
-        async function startConnection() {
-            try {
-                await connection.start();
-                console.log("Conectado ao servidor SignalR");
-                
-                possibleVotes = await connection.invoke("GetValidVotes");
-                console.log("Votos válidos recebidos do servidor:", possibleVotes);
-                
-                generateVoteButtons();
-                
-                if (userName) {
-                    await connection.invoke("LeaveGame", userName).catch(err => console.error(err.toString()));
-                    joinGame(userName);
+        async function ensureConnected() {
+            if (connection.state === signalR.HubConnectionState.Disconnected && !isConnecting) {
+                isConnecting = true;
+                try {
+                    await connection.start();
+                    console.log("Conectado ao servidor SignalR");
+                    
+                    possibleVotes = await connection.invoke("GetValidVotes");
+                    console.log("Votos válidos recebidos do servidor:", possibleVotes);
+                    
+                    generateVoteButtons();
+                } catch (err) {
+                    console.error("Erro ao conectar:", err);
+                    setTimeout(ensureConnected, 5000);
+                } finally {
+                    isConnecting = false;
                 }
-            } catch (err) {
-                console.error("Erro ao conectar, tentando novamente em 5 segundos...", err);
-                setTimeout(startConnection, 5000);
+                return true;
+            }
+            return connection.state === signalR.HubConnectionState.Connected;
+        }
+
+        async function startConnection() {
+            if (await ensureConnected()) {
+                if (roomCode && roomCode.trim() !== "") {
+                    if (userName && userName.trim() !== "") {
+                        // Se temos usuário e sala, tenta entrar direto
+                        joinRoom(roomCode, userName);
+                    } else {
+                        // Verificar se a sala existe antes de pedir o nome
+                        const roomExists = await connection.invoke("RoomExists", roomCode);
+                        if (roomExists) {
+                            const name = prompt("Digite seu nome para entrar na sala:");
+                            if (name && name.trim() !== "") {
+                                joinRoom(roomCode, name);
+                            } else {
+                                // Usuário cancelou o prompt de nome, volta para a tela inicial
+                                roomCode = "";
+                                window.history.pushState({}, "", "/");
+                            }
+                        } else {
+                            // Sala não existe
+                            alert("Sala não encontrada. Verifique o código e tente novamente.");
+                            roomCode = "";
+                            localStorage.removeItem("roomCode");
+                            window.history.pushState({}, "", "/");
+                        }
+                    }
+                }
+                // Se não temos código de sala, simplesmente mostra a tela inicial
             }
         }
 
@@ -60,59 +107,139 @@
 
         connection.onclose(async () => {
             console.warn("Conexão perdida. Tentando reconectar...");
-            await startConnection();
+            await ensureConnected();
         });
 
         startConnection();
 
-        function joinGame(name) {
-            userName = name;
-            localStorage.setItem("userName", userName);
-            connection.invoke("JoinGame", userName).catch(err => console.error(err.toString()));
-            document.getElementById("enterButton").style.display = "none";
-            document.getElementById("exitButton").style.display = "inline-block";
+        async function createRoom() {
+            if (!await ensureConnected()) {
+                alert("Não foi possível conectar ao servidor. Tente novamente.");
+                return;
+            }
+            
+            const newRoomCode = await connection.invoke("CreateRoom");
+            
+            const name = prompt("Digite seu nome para entrar na sala:");
+            if (name && name.trim() !== "") {
+                joinRoom(newRoomCode, name);
+            }
         }
 
-        function enterSystem() {
-            const name = prompt("Digite seu nome:");
-            if (name) {
-                if (userName) {
-                    connection.invoke("LeaveGame", userName).catch(err => console.error(err.toString()));
+        async function joinRoom(code, name) {
+            if (!await ensureConnected()) {
+                alert("Não foi possível conectar ao servidor. Tente novamente.");
+                return;
+            }
+
+            if (!name || name.trim() === "") {
+                name = prompt("Digite seu nome:");
+                if (!name || name.trim() === "") return;
+            }
+            
+            try {
+                const success = await connection.invoke("JoinRoom", code, name);
+                
+                if (success) {
+                    userName = name;
+                    roomCode = code;
+                    
+                    localStorage.setItem("userName", userName);
+                    localStorage.setItem("roomCode", roomCode);
+                    
+                    document.getElementById("roomScreen").style.display = "block";
+                    document.getElementById("initialScreen").style.display = "none";
+                    
+                    document.getElementById("currentRoomCode").textContent = roomCode;
+                    
+                    window.history.pushState({}, "", `/room/${roomCode}`);
                 }
-                joinGame(name);
+            } catch (err) {
+                console.error("Erro ao entrar na sala:", err);
             }
         }
 
-        function exitSystem() {
-            if (userName) {
-                connection.invoke("LeaveGame", userName).catch(err => console.error(err.toString()));
-                localStorage.removeItem("userName");
-                userName = "";
-                document.getElementById("enterButton").style.display = "inline-block";
-                document.getElementById("exitButton").style.display = "none";
+        function leaveRoom() {
+            if (userName && roomCode) {
+                connection.invoke("LeaveRoom", roomCode, userName);
+                
+                localStorage.removeItem("roomCode");
+                roomCode = "";
+                
+                document.getElementById("initialScreen").style.display = "block";
+                document.getElementById("roomScreen").style.display = "none";
+                
+                window.history.pushState({}, "", "/");
             }
+        }
+
+        function enterRoom() {
+            const code = document.getElementById("roomCodeInput").value.trim().toUpperCase();
+            if (code && code.trim() !== "") {
+                verifyAndJoinRoom(code);
+            } else {
+                alert("Por favor, digite um código de sala válido.");
+            }
+        }
+        
+        async function verifyAndJoinRoom(code) {
+            if (!await ensureConnected()) {
+                alert("Não foi possível conectar ao servidor. Tente novamente.");
+                return;
+            }
+            
+            try {
+                const roomExists = await connection.invoke("RoomExists", code);
+                if (roomExists) {
+                    const name = prompt("Digite seu nome:");
+                    if (name && name.trim() !== "") {
+                        joinRoom(code, name);
+                    }
+                } else {
+                    alert("Sala não encontrada. Verifique o código e tente novamente.");
+                }
+            } catch (err) {
+                console.error("Erro ao verificar sala:", err);
+                alert("Ocorreu um erro ao verificar a sala. Tente novamente.");
+            }
+        }
+
+        function copyRoomLink() {
+            const roomUrl = window.location.origin + "/room/" + roomCode;
+            navigator.clipboard.writeText(roomUrl)
+                .then(() => {
+                    const copyTooltip = document.getElementById("copyTooltip");
+                    copyTooltip.innerText = "Link copiado!";
+                    setTimeout(() => {
+                        copyTooltip.innerText = "Copiar Link";
+                    }, 2000);
+                })
+                .catch(err => {
+                    console.error("Erro ao copiar: ", err);
+                    alert("Não foi possível copiar o link. Erro: " + err);
+                });
         }
 
         function vote(value) {
-            if (!userName) {
-                alert("Você precisa entrar no sistema primeiro, seu engraçadinho!");
+            if (!userName || !roomCode) {
+                alert("Você precisa estar em uma sala para votar!");
                 return;
             }
             
             if (!possibleVotes.includes(value)) {
-                alert("Valor de voto inválido, seu engraçadinho!");
+                alert("Valor de voto inválido!");
                 return;
             }
             
-            connection.invoke("SubmitVote", userName, value).catch(err => console.error(err.toString()));
+            connection.invoke("SubmitVote", roomCode, userName, value).catch(err => console.error(err.toString()));
         }
 
         function revealVotes() {
-            connection.invoke("RevealVotes").catch(err => console.error(err.toString()));
+            connection.invoke("RevealVotes", roomCode).catch(err => console.error(err.toString()));
         }
 
         function resetVotes() {
-            connection.invoke("ResetVotes").catch(err => console.error(err.toString()));
+            connection.invoke("ResetVotes", roomCode).catch(err => console.error(err.toString()));
         }
 
         connection.on("UpdateUsers", users => {
@@ -125,6 +252,20 @@
 
         connection.on("RevealVotes", votes => {
             updateTable(votes, true);
+        });
+
+        connection.on("RoomNotFound", () => {
+            alert("Sala não encontrada. Verifique o código e tente novamente.");
+            
+            if (roomCode) {
+                localStorage.removeItem("roomCode");
+                roomCode = "";
+            }
+            
+            document.getElementById("initialScreen").style.display = "block";
+            document.getElementById("roomScreen").style.display = "none";
+            
+            window.history.pushState({}, "", "/");
         });
 
         function updateTable(votes, reveal) {
@@ -174,34 +315,82 @@
                 tbody.appendChild(row);
             });
         }
+        
+        // Adicionar event listener para a tecla Enter no campo de código da sala
+        document.addEventListener("DOMContentLoaded", function() {
+            const roomCodeInput = document.getElementById("roomCodeInput");
+            roomCodeInput.addEventListener("keypress", function(event) {
+                if (event.key === "Enter") {
+                    event.preventDefault();
+                    enterRoom();
+                }
+            });
+        });
     </script>
-
 }
 
-<h1 class="text-center mb-4">Scrum Poker</h1>
-<div class="text-center mb-3">
-    <button id="enterButton" class="btn btn-primary" onclick="enterSystem()">Entrar no Sistema</button>
-    <button id="exitButton" class="btn btn-danger" onclick="exitSystem()" style="display: none;">Sair do Sistema</button>
-</div>
-<p class="text-center">Usuários: <span id="users" class="fw-bold"></span></p>
-<h2 class="text-center">Escolha uma nota:</h2>
-<div id="voteButtonsContainer" class="d-flex justify-content-center flex-wrap gap-2 mb-4">
-</div>
-<h2 class="text-center">Votos</h2>
-<div class="table-responsive">
-    <table class="table table-striped table-bordered">
-        <thead class="table-dark">
-            <tr>
-                <th>Usuário</th>
-                <th>Nota</th>
-            </tr>
-        </thead>
-        <tbody id="votesTable"></tbody>
-    </table>
-</div>
-<div class="text-center mt-3">
-    <button class="btn btn-success" onclick="revealVotes()">Revelar Notas</button>
-    <button class="btn btn-warning" onclick="resetVotes()">Zerar Votos</button>
+<div id="initialScreen" class="container py-5">
+    <h1 class="text-center mb-5">Scrum Poker</h1>
+    
+    <div class="row justify-content-center">
+        <div class="col-md-6 text-center">
+            <div class="card shadow p-4 mb-5">
+                <h2 class="mb-4">Bem-vindo ao Scrum Poker</h2>
+                <button class="btn btn-primary btn-lg w-100 mb-4" onclick="createRoom()">Criar Sala</button>
+                
+                <div class="mt-4">
+                    <h3 class="mb-3">Entrar em uma Sala Existente</h3>
+                    <div class="input-group mb-3">
+                        <input type="text" id="roomCodeInput" class="form-control" placeholder="Código da Sala" maxlength="5" style="text-transform: uppercase;">
+                        <button class="btn btn-success" onclick="enterRoom()">Entrar na Sala</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
 
+<div id="roomScreen" style="display: none;">
+    <div class="container-fluid bg-light py-2 mb-4">
+        <div class="container">
+            <div class="d-flex justify-content-between align-items-center">
+                <div class="d-flex align-items-center">
+                    <div class="me-2">
+                        <strong>Sala:</strong> <span id="currentRoomCode" class="badge bg-primary"></span>
+                    </div>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="copyRoomLink()" title="Copiar link da sala">
+                        <i class="bi bi-clipboard"></i> <span id="copyTooltip">Copiar Link</span>
+                    </button>
+                </div>
+                <button class="btn btn-sm btn-outline-danger" onclick="leaveRoom()">Sair da Sala</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <h1 class="text-center mb-4">Scrum Poker</h1>
+        <p class="text-center">Usuários: <span id="users" class="fw-bold"></span></p>
+        <h2 class="text-center">Escolha uma nota:</h2>
+        <div id="voteButtonsContainer" class="d-flex justify-content-center flex-wrap gap-2 mb-4">
+        </div>
+        <h2 class="text-center">Votos</h2>
+        <div class="table-responsive">
+            <table class="table table-striped table-bordered">
+                <thead class="table-dark">
+                    <tr>
+                        <th>Usuário</th>
+                        <th>Nota</th>
+                    </tr>
+                </thead>
+                <tbody id="votesTable"></tbody>
+            </table>
+        </div>
+        <div class="text-center mt-3">
+            <button class="btn btn-success" onclick="revealVotes()">Revelar Notas</button>
+            <button class="btn btn-warning" onclick="resetVotes()">Zerar Votos</button>
+        </div>
+    </div>
+</div>
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>

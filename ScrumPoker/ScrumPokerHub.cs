@@ -1,8 +1,10 @@
 ﻿using Microsoft.AspNetCore.SignalR;
+using System;
+using System.Text;
 
 public class ScrumPokerHub : Hub
 {
-    private static readonly Dictionary<string, (string ConnectionId, string? Vote)> Votes = new();
+    private static readonly Dictionary<string, Dictionary<string, (string ConnectionId, string? Vote)>> Rooms = new();
     
     public static readonly List<string> ValidVotes = new() { "☕", "?", "0", "0.5", "1", "2", "3", "5", "8", "13", "20", "40", "100" };
 
@@ -11,60 +13,146 @@ public class ScrumPokerHub : Hub
         return ValidVotes;
     }
 
-    public async Task JoinGame(string userName)
+    public bool RoomExists(string roomCode)
     {
-        var existingUser = Votes.FirstOrDefault(x => x.Key == userName);
-        if (!string.IsNullOrEmpty(existingUser.Key))
-        {
-            Votes.Remove(existingUser.Key);
-        }
-
-        Votes[userName] = (Context.ConnectionId, null);
-        await Clients.All.SendAsync("UpdateUsers", Votes.Keys);
-        await Clients.All.SendAsync("UpdateVotes", Votes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Vote));
+        return Rooms.ContainsKey(roomCode);
     }
 
-    public async Task LeaveGame(string userName)
+    public string CreateRoom()
     {
-        if (Votes.ContainsKey(userName))
+        string roomCode = GenerateRoomCode();
+        while (Rooms.ContainsKey(roomCode))
         {
-            Votes.Remove(userName);
-            await Clients.All.SendAsync("UpdateUsers", Votes.Keys);
-            await Clients.All.SendAsync("UpdateVotes", Votes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Vote));
+            roomCode = GenerateRoomCode();
+        }
+        
+        Rooms[roomCode] = new Dictionary<string, (string ConnectionId, string? Vote)>();
+        
+        return roomCode;
+    }
+
+    private string GenerateRoomCode()
+    {
+        const string chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+        var random = new Random();
+        var code = new StringBuilder(5);
+        
+        for (int i = 0; i < 5; i++)
+        {
+            code.Append(chars[random.Next(chars.Length)]);
+        }
+        
+        return code.ToString();
+    }
+
+    public async Task<bool> JoinRoom(string roomCode, string userName)
+    {
+        if (!Rooms.ContainsKey(roomCode))
+        {
+            await Clients.Caller.SendAsync("RoomNotFound");
+            return false;
+        }
+
+        var room = Rooms[roomCode];
+        
+        foreach (var otherRoomCode in Rooms.Keys)
+        {
+            if (Rooms[otherRoomCode].ContainsKey(userName))
+            {
+                Rooms[otherRoomCode].Remove(userName);
+                await Clients.Group(otherRoomCode).SendAsync("UpdateUsers", Rooms[otherRoomCode].Keys);
+                await Clients.Group(otherRoomCode).SendAsync("UpdateVotes", Rooms[otherRoomCode].ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Vote));
+            }
+        }
+        
+        await Groups.AddToGroupAsync(Context.ConnectionId, roomCode);
+        
+        room[userName] = (Context.ConnectionId, null);
+        
+        await Clients.Group(roomCode).SendAsync("UpdateUsers", room.Keys);
+        await Clients.Group(roomCode).SendAsync("UpdateVotes", room.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Vote));
+        
+        return true;
+    }
+
+    public async Task LeaveRoom(string roomCode, string userName)
+    {
+        if (Rooms.ContainsKey(roomCode) && Rooms[roomCode].ContainsKey(userName))
+        {
+            var room = Rooms[roomCode];
+            room.Remove(userName);
+            
+            await Groups.RemoveFromGroupAsync(Context.ConnectionId, roomCode);
+            
+            if (room.Count == 0)
+            {
+                Rooms.Remove(roomCode);
+            }
+            else
+            {
+                await Clients.Group(roomCode).SendAsync("UpdateUsers", room.Keys);
+                await Clients.Group(roomCode).SendAsync("UpdateVotes", room.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Vote));
+            }
         }
     }
 
-    public async Task SubmitVote(string userName, string vote)
+    public async Task SubmitVote(string roomCode, string userName, string vote)
     {
-        if (Votes.ContainsKey(userName) && ValidVotes.Contains(vote))
+        if (Rooms.ContainsKey(roomCode) && 
+            Rooms[roomCode].ContainsKey(userName) && 
+            ValidVotes.Contains(vote))
         {
-            Votes[userName] = (Votes[userName].ConnectionId, vote);
-            await Clients.All.SendAsync("UpdateVotes", Votes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Vote));
+            var room = Rooms[roomCode];
+            room[userName] = (room[userName].ConnectionId, vote);
+            
+            await Clients.Group(roomCode).SendAsync("UpdateVotes", room.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Vote));
         }
     }
 
-    public async Task RevealVotes()
+    public async Task RevealVotes(string roomCode)
     {
-        await Clients.All.SendAsync("RevealVotes", Votes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Vote));
+        if (Rooms.ContainsKey(roomCode))
+        {
+            var room = Rooms[roomCode];
+            await Clients.Group(roomCode).SendAsync("RevealVotes", room.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Vote));
+        }
     }
 
-    public async Task ResetVotes()
+    public async Task ResetVotes(string roomCode)
     {
-        foreach (var key in Votes.Keys.ToList())
+        if (Rooms.ContainsKey(roomCode))
         {
-            Votes[key] = (Votes[key].ConnectionId, null);
+            var room = Rooms[roomCode];
+            foreach (var key in room.Keys.ToList())
+            {
+                room[key] = (room[key].ConnectionId, null);
+            }
+            
+            await Clients.Group(roomCode).SendAsync("UpdateVotes", room.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Vote));
         }
-        await Clients.All.SendAsync("UpdateVotes", Votes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Vote));
     }
 
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
-        var user = Votes.FirstOrDefault(x => x.Value.ConnectionId == Context.ConnectionId);
-        if (!string.IsNullOrEmpty(user.Key))
+        foreach (var roomCode in Rooms.Keys.ToList())
         {
-            Votes.Remove(user.Key);
-            await Clients.All.SendAsync("UpdateUsers", Votes.Keys);
-            await Clients.All.SendAsync("UpdateVotes", Votes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Vote));
+            var room = Rooms[roomCode];
+            var user = room.FirstOrDefault(x => x.Value.ConnectionId == Context.ConnectionId);
+            
+            if (!string.IsNullOrEmpty(user.Key))
+            {
+                room.Remove(user.Key);
+                
+                if (room.Count == 0)
+                {
+                    Rooms.Remove(roomCode);
+                }
+                else
+                {
+                    await Clients.Group(roomCode).SendAsync("UpdateUsers", room.Keys);
+                    await Clients.Group(roomCode).SendAsync("UpdateVotes", room.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Vote));
+                }
+            }
         }
 
         await base.OnDisconnectedAsync(exception);
