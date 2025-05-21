@@ -9,6 +9,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/7.0.5/signalr.min.js"></script>
     <script>
         let userName = localStorage.getItem("userName") || "";
+        let possibleVotes = [];
 
         //let url = "https://91ae-136-226-62-112.ngrok-free.app/pokerHub";
         let url = `${window.location.origin}/pokerHub`;
@@ -26,6 +27,12 @@
             try {
                 await connection.start();
                 console.log("Conectado ao servidor SignalR");
+                
+                possibleVotes = await connection.invoke("GetValidVotes");
+                console.log("Votos válidos recebidos do servidor:", possibleVotes);
+                
+                generateVoteButtons();
+                
                 if (userName) {
                     await connection.invoke("LeaveGame", userName).catch(err => console.error(err.toString()));
                     joinGame(userName);
@@ -33,6 +40,21 @@
             } catch (err) {
                 console.error("Erro ao conectar, tentando novamente em 5 segundos...", err);
                 setTimeout(startConnection, 5000);
+            }
+        }
+
+        function generateVoteButtons() {
+            const voteButtonsContainer = document.getElementById("voteButtonsContainer");
+            voteButtonsContainer.innerHTML = "";
+            
+            for (const voteValue of possibleVotes) {
+                const button = document.createElement("button");
+                button.className = "btn btn-outline-primary";
+                button.onclick = function() { vote(voteValue); };
+                button.textContent = voteValue;
+                voteButtonsContainer.appendChild(button);
+                
+                voteButtonsContainer.appendChild(document.createTextNode(" "));
             }
         }
 
@@ -73,9 +95,15 @@
 
         function vote(value) {
             if (!userName) {
-                alert("Você precisa entrar no sistema primeiro.");
+                alert("Você precisa entrar no sistema primeiro, seu engraçadinho!");
                 return;
             }
+            
+            if (!possibleVotes.includes(value)) {
+                alert("Valor de voto inválido, seu engraçadinho!");
+                return;
+            }
+            
             connection.invoke("SubmitVote", userName, value).catch(err => console.error(err.toString()));
         }
 
@@ -102,16 +130,49 @@
         function updateTable(votes, reveal) {
             const tbody = document.getElementById("votesTable");
             tbody.innerHTML = "";
-            for (const user in votes) {
+            
+            let usersArray = Object.keys(votes).map(user => ({
+                name: user,
+                vote: votes[user]
+            }));
+            
+            if (reveal) {
+                const voteValues = {};
+                
+                voteValues[''] = 9999;
+                voteValues['?'] = 9998;
+                voteValues['☕'] = 9997;
+                
+                possibleVotes.forEach(vote => {
+                    if (!isNaN(parseFloat(vote))) {
+                        voteValues[vote] = parseFloat(vote);
+                    }
+                });
+                
+                usersArray.sort((a, b) => {
+                    let voteA = a.vote === null ? '' : a.vote;
+                    let voteB = b.vote === null ? '' : b.vote;
+                    
+                    let valueA = voteValues[voteA];
+                    let valueB = voteValues[voteB];
+                    
+                    if (valueA === undefined) valueA = 999;
+                    if (valueB === undefined) valueB = 999;
+                    
+                    return valueA - valueB;
+                });
+            }
+            
+            usersArray.forEach(user => {
                 const row = document.createElement("tr");
                 const nameCell = document.createElement("td");
-                nameCell.textContent = user;
+                nameCell.textContent = user.name;
                 const voteCell = document.createElement("td");
-                voteCell.textContent = reveal ? votes[user] ?? "" : (votes[user] ? (user == userName ? votes[user] : "🙈") : "-");
+                voteCell.textContent = reveal ? user.vote ?? "" : (user.vote ? (user.name == userName ? user.vote : "🙈") : "-");
                 row.appendChild(nameCell);
                 row.appendChild(voteCell);
                 tbody.appendChild(row);
-            }
+            });
         }
     </script>
 
@@ -124,13 +185,7 @@
 </div>
 <p class="text-center">Usuários: <span id="users" class="fw-bold"></span></p>
 <h2 class="text-center">Escolha uma nota:</h2>
-<div class="d-flex justify-content-center flex-wrap gap-2 mb-4">
-    <script>
-        const possibleVotes = ['☕', '?', '0', '0.5', '1', '2', '3', '5', '8', '13', '20', '40', '100'];
-        for (const vote of possibleVotes) {
-            document.write(`<button class="btn btn-outline-primary" onclick="vote('${vote}')">${vote}</button> `);
-        }
-    </script>
+<div id="voteButtonsContainer" class="d-flex justify-content-center flex-wrap gap-2 mb-4">
 </div>
 <h2 class="text-center">Votos</h2>
 <div class="table-responsive">

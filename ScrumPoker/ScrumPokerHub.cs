@@ -3,6 +3,13 @@
 public class ScrumPokerHub : Hub
 {
     private static readonly Dictionary<string, (string ConnectionId, string? Vote)> Votes = new();
+    
+    public static readonly List<string> ValidVotes = new() { "☕", "?", "0", "0.5", "1", "2", "3", "5", "8", "13", "20", "40", "100" };
+
+    public List<string> GetValidVotes()
+    {
+        return ValidVotes;
+    }
 
     public async Task JoinGame(string userName)
     {
@@ -14,7 +21,7 @@ public class ScrumPokerHub : Hub
 
         Votes[userName] = (Context.ConnectionId, null);
         await Clients.All.SendAsync("UpdateUsers", Votes.Keys);
-        //await Clients.All.SendAsync("UpdateVotes", Votes);
+        await Clients.All.SendAsync("UpdateVotes", Votes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Vote));
     }
 
     public async Task LeaveGame(string userName)
@@ -23,13 +30,13 @@ public class ScrumPokerHub : Hub
         {
             Votes.Remove(userName);
             await Clients.All.SendAsync("UpdateUsers", Votes.Keys);
-            await Clients.All.SendAsync("UpdateVotes", Votes);
+            await Clients.All.SendAsync("UpdateVotes", Votes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Vote));
         }
     }
 
     public async Task SubmitVote(string userName, string vote)
     {
-        if (Votes.ContainsKey(userName))
+        if (Votes.ContainsKey(userName) && ValidVotes.Contains(vote))
         {
             Votes[userName] = (Votes[userName].ConnectionId, vote);
             await Clients.All.SendAsync("UpdateVotes", Votes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Vote));
