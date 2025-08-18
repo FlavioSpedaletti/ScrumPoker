@@ -111,6 +111,9 @@
         });
 
         startConnection();
+        
+        // Atualiza a exibição inicial do nome quando a página carrega
+        updateInitialUserNameDisplay();
 
         async function createRoom() {
             if (!await ensureConnected()) {
@@ -120,9 +123,14 @@
             
             const newRoomCode = await connection.invoke("CreateRoom");
             
-            const name = prompt("Digite seu nome para entrar na sala:");
-            if (name && name.trim() !== "") {
-                joinRoom(newRoomCode, name);
+            // Se já temos um userName salvo, usar diretamente
+            if (userName && userName.trim() !== "") {
+                joinRoom(newRoomCode, userName);
+            } else {
+                const name = prompt("Digite seu nome para entrar na sala:");
+                if (name && name.trim() !== "") {
+                    joinRoom(newRoomCode, name);
+                }
             }
         }
 
@@ -151,6 +159,7 @@
                     document.getElementById("initialScreen").style.display = "none";
                     
                     document.getElementById("currentRoomCode").textContent = roomCode;
+                    updateUserNameDisplay();
                     
                     window.history.pushState({}, "", `/room/${roomCode}`);
                 }
@@ -169,7 +178,78 @@
                 document.getElementById("initialScreen").style.display = "block";
                 document.getElementById("roomScreen").style.display = "none";
                 
+                // Atualiza a exibição do nome na tela inicial
+                updateInitialUserNameDisplay();
+                
                 window.history.pushState({}, "", "/");
+            }
+        }
+
+        async function changeUserName() {
+            const currentName = userName || "";
+            const newName = prompt("Digite seu novo nome:", currentName);
+            
+            if (newName && newName.trim() !== "" && newName.trim() !== currentName) {
+                const oldUserName = userName;
+                
+                // Atualiza o nome do usuário no localStorage
+                userName = newName.trim();
+                localStorage.setItem("userName", userName);
+                
+                // Se estiver em uma sala, usa o método específico do Hub
+                if (roomCode && oldUserName) {
+                    try {
+                        // Usa o método ChangeUserName do Hub
+                        const success = await connection.invoke("ChangeUserName", roomCode, oldUserName, userName);
+                        
+                        if (success) {
+                            updateUserNameDisplay();
+                            console.log("Nome alterado com sucesso para:", userName);
+                        } else {
+                            // Se falhou, volta para o nome anterior
+                            userName = oldUserName;
+                            localStorage.setItem("userName", userName);
+                            updateUserNameDisplay();
+                            alert("Não foi possível alterar o nome. Tente novamente.");
+                        }
+                    } catch (err) {
+                        console.error("Erro ao alterar nome:", err);
+                        // Se falhou, volta para o nome anterior
+                        userName = oldUserName;
+                        localStorage.setItem("userName", userName);
+                        updateUserNameDisplay();
+                        alert("Erro ao alterar o nome. Tente novamente.");
+                    }
+                } else {
+                    // Se não estiver em sala, apenas atualiza a interface
+                    updateUserNameDisplay();
+                    console.log("Nome alterado para:", userName);
+                }
+            }
+        }
+
+        function updateUserNameDisplay() {
+            // Atualiza o nome na tela da sala (se existir o elemento)
+            const roomUserName = document.getElementById("currentUserName");
+            if (roomUserName && userName) {
+                roomUserName.textContent = userName;
+            }
+            
+            // Atualiza o nome na tela inicial
+            updateInitialUserNameDisplay();
+        }
+
+        function updateInitialUserNameDisplay() {
+            const userNameSection = document.getElementById("userNameSection");
+            const initialUserName = document.getElementById("initialUserName");
+            
+            if (userName && userName.trim() !== "") {
+                // Mostra a seção e atualiza o nome
+                userNameSection.style.display = "block";
+                initialUserName.textContent = userName;
+            } else {
+                // Oculta a seção se não há nome
+                userNameSection.style.display = "none";
             }
         }
 
@@ -191,9 +271,14 @@
             try {
                 const roomExists = await connection.invoke("RoomExists", code);
                 if (roomExists) {
-                    const name = prompt("Digite seu nome:");
-                    if (name && name.trim() !== "") {
-                        joinRoom(code, name);
+                    // Se já temos um userName salvo, usar diretamente
+                    if (userName && userName.trim() !== "") {
+                        joinRoom(code, userName);
+                    } else {
+                        const name = prompt("Digite seu nome:");
+                        if (name && name.trim() !== "") {
+                            joinRoom(code, name);
+                        }
                     }
                 } else {
                     alert("Sala não encontrada. Verifique o código e tente novamente.");
@@ -334,6 +419,19 @@
     
     <div class="row justify-content-center">
         <div class="col-md-6 text-center">
+            <!-- Seção do Nome do Usuário -->
+            <div id="userNameSection" class="card shadow p-3 mb-4" style="display: none;">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <strong>Seu nome:</strong> <span id="initialUserName" class="badge bg-success"></span>
+                    </div>
+                    <button class="btn btn-sm btn-outline-primary" onclick="changeUserName()" title="Trocar nome de usuário">
+                        <i class="bi bi-person-gear"></i> Alterar
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Card principal -->
             <div class="card shadow p-4 mb-5">
                 <h2 class="mb-4">Bem-vindo ao Scrum Poker</h2>
                 <button class="btn btn-primary btn-lg w-100 mb-4" onclick="createRoom()">Criar Sala</button>
@@ -362,7 +460,15 @@
                         <i class="bi bi-clipboard"></i> <span id="copyTooltip">Copiar Link</span>
                     </button>
                 </div>
-                <button class="btn btn-sm btn-outline-danger" onclick="leaveRoom()">Sair da Sala</button>
+                <div class="d-flex align-items-center">
+                    <div class="me-3">
+                        <strong>Logado como:</strong> <span id="currentUserName" class="badge bg-success"></span>
+                    </div>
+                    <button class="btn btn-sm btn-outline-primary me-2" onclick="changeUserName()" title="Trocar nome de usuário">
+                        <i class="bi bi-person-gear"></i> Trocar Nome
+                    </button>
+                    <button class="btn btn-sm btn-outline-danger" onclick="leaveRoom()">Sair da Sala</button>
+                </div>
             </div>
         </div>
     </div>

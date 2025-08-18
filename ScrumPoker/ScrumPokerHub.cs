@@ -5,6 +5,7 @@ using System.Text;
 public class ScrumPokerHub : Hub
 {
     private static readonly Dictionary<string, Dictionary<string, (string ConnectionId, string? Vote)>> Rooms = new();
+    private static readonly Dictionary<string, Timer> RoomCleanupTimers = new();
     
     public static readonly List<string> ValidVotes = new() { "☕", "?", "0", "0.5", "1", "2", "3", "5", "8", "13", "20", "40", "100" };
 
@@ -69,6 +70,9 @@ public class ScrumPokerHub : Hub
         
         room[userName] = (Context.ConnectionId, null);
         
+        // Cancela qualquer cleanup agendado já que a sala tem usuários agora
+        CancelRoomCleanup(roomCode);
+        
         await Clients.Group(roomCode).SendAsync("UpdateUsers", room.Keys);
         await Clients.Group(roomCode).SendAsync("UpdateVotes", room.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Vote));
         
@@ -86,14 +90,63 @@ public class ScrumPokerHub : Hub
             
             if (room.Count == 0)
             {
-                Rooms.Remove(roomCode);
+                // Em vez de remover imediatamente, agenda remoção para daqui a 30 segundos
+                ScheduleRoomCleanup(roomCode);
             }
             else
             {
+                // Se a sala ainda tem usuários, cancela qualquer cleanup agendado
+                CancelRoomCleanup(roomCode);
                 await Clients.Group(roomCode).SendAsync("UpdateUsers", room.Keys);
                 await Clients.Group(roomCode).SendAsync("UpdateVotes", room.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Vote));
             }
         }
+    }
+
+    public async Task<bool> ChangeUserName(string roomCode, string oldUserName, string newUserName)
+    {
+        if (!Rooms.ContainsKey(roomCode))
+        {
+            await Clients.Caller.SendAsync("RoomNotFound");
+            return false;
+        }
+
+        var room = Rooms[roomCode];
+        
+        if (!room.ContainsKey(oldUserName))
+        {
+            return false;
+        }
+
+        // Verifica se o novo nome já existe na sala
+        if (room.ContainsKey(newUserName))
+        {
+            return false;
+        }
+
+        // Remove o usuário com nome antigo das outras salas (se existir)
+        foreach (var otherRoomCode in Rooms.Keys)
+        {
+            if (otherRoomCode != roomCode && Rooms[otherRoomCode].ContainsKey(newUserName))
+            {
+                Rooms[otherRoomCode].Remove(newUserName);
+                await Clients.Group(otherRoomCode).SendAsync("UpdateUsers", Rooms[otherRoomCode].Keys);
+                await Clients.Group(otherRoomCode).SendAsync("UpdateVotes", Rooms[otherRoomCode].ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Vote));
+            }
+        }
+
+        // Pega os dados do usuário antigo (connectionId e voto)
+        var userData = room[oldUserName];
+        
+        // Remove o nome antigo e adiciona o novo com os mesmos dados
+        room.Remove(oldUserName);
+        room[newUserName] = userData;
+        
+        // Atualiza todos os clientes da sala
+        await Clients.Group(roomCode).SendAsync("UpdateUsers", room.Keys);
+        await Clients.Group(roomCode).SendAsync("UpdateVotes", room.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Vote));
+        
+        return true;
     }
 
     public async Task SubmitVote(string roomCode, string userName, string vote)
@@ -145,7 +198,8 @@ public class ScrumPokerHub : Hub
                 
                 if (room.Count == 0)
                 {
-                    Rooms.Remove(roomCode);
+                    // Em vez de remover imediatamente, agenda remoção para daqui a 30 segundos
+                    ScheduleRoomCleanup(roomCode);
                 }
                 else
                 {
@@ -156,5 +210,32 @@ public class ScrumPokerHub : Hub
         }
 
         await base.OnDisconnectedAsync(exception);
+    }
+
+    private static void ScheduleRoomCleanup(string roomCode)
+    {
+        // Cancela timer existente se houver
+        CancelRoomCleanup(roomCode);
+        
+        // Cria novo timer para remover a sala em 30 segundos
+        var timer = new Timer(_ => 
+        {
+            if (Rooms.ContainsKey(roomCode) && Rooms[roomCode].Count == 0)
+            {
+                Rooms.Remove(roomCode);
+                CancelRoomCleanup(roomCode);
+            }
+        }, null, TimeSpan.FromSeconds(30), Timeout.InfiniteTimeSpan);
+        
+        RoomCleanupTimers[roomCode] = timer;
+    }
+
+    private static void CancelRoomCleanup(string roomCode)
+    {
+        if (RoomCleanupTimers.TryGetValue(roomCode, out var timer))
+        {
+            timer.Dispose();
+            RoomCleanupTimers.Remove(roomCode);
+        }
     }
 }
