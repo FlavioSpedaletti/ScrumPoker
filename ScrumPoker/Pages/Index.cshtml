@@ -115,6 +115,21 @@
         // Atualiza a exibição inicial do nome quando a página carrega
         updateInitialUserNameDisplay();
 
+        function togglePointsInfo() {
+            const pointsInfo = document.getElementById('pointsInfo');
+            const chevronIcon = document.getElementById('pointsChevron');
+            
+            if (pointsInfo.style.display === 'none' || pointsInfo.style.display === '') {
+                pointsInfo.style.display = 'block';
+                chevronIcon.classList.remove('bi-chevron-down');
+                chevronIcon.classList.add('bi-chevron-up');
+            } else {
+                pointsInfo.style.display = 'none';
+                chevronIcon.classList.remove('bi-chevron-up');
+                chevronIcon.classList.add('bi-chevron-down');
+            }
+        }
+
         async function createRoom() {
             if (!await ensureConnected()) {
                 alert("Não foi possível conectar ao servidor. Tente novamente.");
@@ -410,6 +425,7 @@
                     enterRoom();
                 }
             });
+            
         });
     </script>
 }
@@ -477,6 +493,76 @@
         <h1 class="text-center mb-4">Scrum Poker</h1>
         <p class="text-center">Usuários: <span id="users" class="fw-bold"></span></p>
         <h2 class="text-center">Escolha uma nota:</h2>
+        
+        <!-- Painel informativo sobre as pontuações -->
+        <div class="card mb-3 mx-auto" style="max-width: 800px;">
+            <div class="card-header bg-info text-white py-2">
+                <button class="btn btn-link text-white text-decoration-none p-0 w-100 text-start d-flex justify-content-between align-items-center" 
+                        type="button" onclick="togglePointsInfo()">
+                    <span><i class="bi bi-info-circle me-2"></i>Guia de Pontuação</span>
+                    <i id="pointsChevron" class="bi bi-chevron-down"></i>
+                </button>
+            </div>
+            <div id="pointsInfo" style="display: none;">
+                <div class="card-body p-3">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <table class="table table-sm table-borderless mb-0">
+                                <tbody>
+                                    <tr>
+                                        <td class="fw-bold text-center" style="width: 50px;">0</td>
+                                        <td>Tarefa trivial, esforço quase inexistente.</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="fw-bold text-center">1</td>
+                                        <td>Tarefa muito pequena, trivial para implementar.</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="fw-bold text-center">2</td>
+                                        <td>Tarefa pequena, mas exige atenção.</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="fw-bold text-center">3</td>
+                                        <td>Tarefa média, já precisa de planejamento e alguns dias de trabalho.</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="fw-bold text-center">5</td>
+                                        <td>Tarefa intermediária, envolve esforço considerável.</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="col-md-6">
+                            <table class="table table-sm table-borderless mb-0">
+                                <tbody>
+                                    <tr>
+                                        <td class="fw-bold text-center" style="width: 50px;">8</td>
+                                        <td>Tarefa complexa, com várias dependências ou riscos.</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="fw-bold text-center">13</td>
+                                        <td>Tarefa grande, pode ser necessário dividir em partes.</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="fw-bold text-center">20+</td>
+                                        <td>Necessário dividir em partes menores.</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="fw-bold text-center">?</td>
+                                        <td>Incerteza sobre o escopo ou complexidade.</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="fw-bold text-center">☕</td>
+                                        <td>Preciso de uma pausa para pensar melhor.</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
         <div id="voteButtonsContainer" class="d-flex justify-content-center flex-wrap gap-2 mb-4">
         </div>
         <h2 class="text-center">Votos</h2>
